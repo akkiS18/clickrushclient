@@ -8,6 +8,16 @@ type Target = {
   spawnAt: number; // timestamp ms
 };
 
+declare global {
+  interface Window {
+    ysdk: any; // Yandex SDK global obyekti
+    Telegram: any; // Eski kod buzilmasligi uchun
+    YaGames: {
+      init: () => Promise<any>;
+    };
+  }
+}
+
 const COLORS: Target["color"][] = ["green", "red", "yellow"];
 
 const BASE_SPAWN_INTERVAL = 1200; // boshlang'ich yangi target uchun ms
@@ -17,19 +27,36 @@ const MIN_LIFESPAN = 400;
 const MIN_SPAWN_INTERVAL = 450;
 
 export default function Game() {
+  const [ysdk, setYsdk] = useState<any>(null);
+
   const [targets, setTargets] = useState<Target[]>([]);
   const [running, setRunning] = useState(false);
   const [score, setScore] = useState(0);
   const [best, setBest] = useState(0);
   const [user, setUser] = useState<any>(null);
   const [gameOver, setGameOver] = useState<string | null>(null);
+  const [currentSpeed, setCurrentSpeed] = useState(1);
 
   const nextId = useRef(1);
   const spawnIntervalRef = useRef(BASE_SPAWN_INTERVAL);
   const lifespanRef = useRef(BASE_LIFESPAN);
   const spawnTimerRef = useRef<number | null>(null);
   const speedupTimerRef = useRef<number | null>(null);
-  const containerRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (window.YaGames) {
+      window.YaGames.init().then((ysdk: any) => {
+        setYsdk(ysdk);
+        window.ysdk = ysdk;
+
+        // O‘yin tayyorligini bildirish (MAJBURIY!)
+        ysdk.features.LoadingAPI?.ready();
+
+        // Birinchi marta fullscreen reklama (ixtiyoriy, lekin ko‘p daromad)
+        ysdk.adv.showFullscreenAdv();
+      });
+    }
+  }, []);
 
   useEffect(() => {
     // Telegram WebApp user (agar mavjud bo'lsa)
@@ -72,13 +99,20 @@ export default function Game() {
 
     // tezlik oshirish timer
     speedupTimerRef.current = window.setInterval(() => {
-      // har 10s kamaytirish
       spawnIntervalRef.current = Math.max(
         MIN_SPAWN_INTERVAL,
         Math.round(spawnIntervalRef.current * 0.88)
       );
-      lifespanRef.current = Math.max(MIN_LIFESPAN, Math.round(lifespanRef.current * 0.88));
-      // reset interval to use new spawnInterval
+      lifespanRef.current = Math.max(
+        MIN_LIFESPAN,
+        Math.round(lifespanRef.current * 0.88)
+      );
+
+      // Tezlikni hisoblab, HUD da ko‘rsatamiz
+      const speedLevel =
+        Math.round((BASE_LIFESPAN / lifespanRef.current) * 10) / 10;
+      setCurrentSpeed(speedLevel);
+
       if (spawnTimerRef.current) {
         clearInterval(spawnTimerRef.current);
         spawnTimerRef.current = window.setInterval(
@@ -115,6 +149,15 @@ export default function Game() {
     setGameOver(reason);
     setRunning(false);
     setTargets([]);
+
+    if (ysdk) {
+      ysdk.adv.showFullscreenAdv({
+        callbacks: {
+          onClose: () => console.log("Reklama yopildi"),
+          onError: () => console.log("Reklama xato"),
+        },
+      });
+    }
   };
 
   const handleTargetClick = (t: Target) => {
@@ -137,6 +180,14 @@ export default function Game() {
   };
 
   const saveScore = async () => {
+    if (!ysdk) return;
+
+    ysdk.getLeaderboards().then((lb: any) => {
+      lb.setLeaderboardScore("clickrush", score, "ball")
+        .then(() => alert("✅ Yandex reytingga yuborildi!"))
+        .catch(() => alert("Reytingga yuborishda xato"));
+    });
+
     if (!user) {
       alert("Telegram user ma'lumotlari topilmadi, login orqali yuboring.");
       return;
@@ -159,48 +210,68 @@ export default function Game() {
   };
 
   return (
-    <div className="page">
-      <h2>🎯 Click Rush (TS)</h2>
-
+    <div className="game-container">
+      {/* HUD */}
       <div className="hud">
-        <div>Ball: <strong>{score}</strong></div>
-        <div>Best: <strong>{best}</strong></div>
-        <div>Status: {running ? "Ishlayapti" : gameOver ? "Tugatildi" : "Tayyor"}</div>
+        <div>
+          Ball:{" "}
+          <span style={{ color: "#84fab0", fontSize: "28px" }}>{score}</span>
+        </div>
+        <div>
+          Eng yaxshi: <span style={{ color: "#ffd700" }}>{best}</span>
+        </div>
       </div>
 
-      <div ref={containerRef} className="game-area">
-        {targets.map((t) => (
-          <button
-            key={t.id}
-            className={`target ${t.color}`}
-            style={{ left: `${t.x}%`, top: `${t.y}%` }}
-            onClick={() => handleTargetClick(t)}
-            aria-label={`target-${t.id}`}
-          >
-            {t.color === "green" ? "🟢" : t.color === "red" ? "🔴" : "🟡"}
+      {/* Targets */}
+      {targets.map((t) => (
+        <button
+          key={t.id}
+          className={`target ${t.color}`}
+          style={{ left: `${t.x}%`, top: `${t.y}%` }}
+          onClick={() => handleTargetClick(t)}
+        >
+          {t.color === "green"
+            ? "Circle"
+            : t.color === "red"
+            ? "Cross"
+            : "Circle"}
+        </button>
+      ))}
+
+      {/* Start Screen */}
+      {!running && !gameOver && (
+        <div className="overlay">
+          <h1 className="title pulse">Click Rush</h1>
+          <button className="btn" onClick={startGame}>
+            START GAME
           </button>
-        ))}
+        </div>
+      )}
 
-        {!running && !gameOver && (
-          <div className="overlay center">
-            <button className="btn" onClick={startGame}>Boshlash</button>
+      {/* Game Over Screen */}
+      {gameOver && (
+        <div className="overlay">
+          <h1 style={{ fontSize: "56px", margin: "0 0 20px" }}>Game Over</h1>
+          <p style={{ fontSize: "32px", margin: "10px" }}>{gameOver}</p>
+          <p style={{ fontSize: "48px", color: "#84fab0", margin: "20px 0" }}>
+            {score} ball
+          </p>
+          <div>
+            <button className="btn" onClick={startGame}>
+              YANA O‘YNASH
+            </button>
+            <button className="btn save" onClick={saveScore}>
+              SAQLASH
+            </button>
           </div>
-        )}
+        </div>
+      )}
 
-        {gameOver && (
-          <div className="overlay center">
-            <p><strong>{gameOver}</strong></p>
-            <p>Sizning ball: {score}</p>
-            <div style={{ display: "flex", gap: 10 }}>
-              <button className="btn" onClick={startGame}>Yana o‘ynash</button>
-              <button className="btn save" onClick={saveScore}>💾 Natijani saqlash</button>
-            </div>
-          </div>
-        )}
-      </div>
-
-      <div style={{ marginTop: 12, fontSize: 13, color: "#aaa" }}>
-        Qoidalar: faqat <strong>yashil</strong>ni bosing. Kechiksa yoki qizilni bossangiz — o‘yin tugaydi.
+      {/* Rules */}
+      <div className="rules">
+        Faqat <span style={{ color: "#84fab0" }}>yashil</span> doirani bosing •{" "}
+        <span style={{ color: "#ff4d4d" }}>Qizil</span> — o‘yin tugaydi •
+        Kechiksa — o‘yin tugaydi
       </div>
     </div>
   );

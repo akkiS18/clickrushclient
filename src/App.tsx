@@ -1,4 +1,3 @@
-// src/pages/Game.tsx
 import { useEffect, useRef, useState } from "react";
 
 type Target = {
@@ -9,7 +8,14 @@ type Target = {
   spawnAt: number; // timestamp ms
 };
 
-const COLORS: Target["color"][] = ["green", "yellow", "red"]; // o'zgartirish mumkin
+type ScorePopup = {
+  id: number;
+  x: number;
+  y: number;
+  value: number;
+};
+
+const COLORS: Target["color"][] = ["green", "yellow", "red"];
 const BASE_SPAWN_INTERVAL = 1200;
 const BASE_LIFESPAN = 1200;
 const SPEEDUP_EVERY = 10000;
@@ -23,6 +29,8 @@ export default function Game() {
   const [best, setBest] = useState(0);
   const [user, setUser] = useState<any>(null);
   const [gameOver, setGameOver] = useState<string | null>(null);
+  const [currentSpeed, setCurrentSpeed] = useState(1);
+  const [scorePopups, setScorePopups] = useState<ScorePopup[]>([]);
 
   const nextId = useRef(1);
   const spawnIntervalRef = useRef(BASE_SPAWN_INTERVAL);
@@ -37,7 +45,6 @@ export default function Game() {
   }, [score]);
 
   useEffect(() => {
-    // Telegram WebApp user (agar mavjud bo'lsa)
     const tg = (window as any).Telegram?.WebApp;
     if (tg?.initDataUnsafe?.user) {
       try {
@@ -52,7 +59,7 @@ export default function Game() {
     const spawn = () => {
       const id = nextId.current++;
       const x = Math.random() * 85 + 5;
-      const y = Math.random() * 70 + 5;
+      const y = Math.random() * 60 + 20;
       const color = COLORS[Math.floor(Math.random() * COLORS.length)];
       const t = Date.now();
 
@@ -66,24 +73,19 @@ export default function Game() {
           if (!exists) return list;
 
           if (exists.color === "green") {
-            // agar yashil missed bo'lsa -> o'yin tugaydi
-            setGameOver("Vaqt tugadi — yashilni bosolmadingiz");
+            setGameOver("Время вышло — не успели нажать зелёный!");
             setRunning(false);
-            // o'shani olib tashla
             return list.filter((tt) => tt.id !== id);
           } else {
-            // red yoki yellow expired bo'lsa — shunchaki o'chirib qo'yamiz
             return list.filter((tt) => tt.id !== id);
           }
         });
       }, lifespan);
     };
 
-    // birinchi spawn va interval
     spawn();
     spawnTimerRef.current = window.setInterval(spawn, spawnIntervalRef.current);
 
-    // tezlik oshirish
     speedupTimerRef.current = window.setInterval(() => {
       spawnIntervalRef.current = Math.max(
         MIN_SPAWN_INTERVAL,
@@ -94,10 +96,16 @@ export default function Game() {
         Math.round(lifespanRef.current * 0.88)
       );
 
-      // intervalni yangilash
+      const speedLevel =
+        Math.round((BASE_LIFESPAN / lifespanRef.current) * 10) / 10;
+      setCurrentSpeed(speedLevel);
+
       if (spawnTimerRef.current) {
         clearInterval(spawnTimerRef.current);
-        spawnTimerRef.current = window.setInterval(spawn, spawnIntervalRef.current);
+        spawnTimerRef.current = window.setInterval(
+          spawn,
+          spawnIntervalRef.current
+        );
       }
     }, SPEEDUP_EVERY);
 
@@ -111,14 +119,12 @@ export default function Game() {
         speedupTimerRef.current = null;
       }
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [running]);
 
   useEffect(() => {
     setBest((b) => Math.max(b, score));
   }, [score]);
 
-  // avtomatik saqlash: o'yin tugagach backendga yuboradi (server '/save-score' eski score bilan taqqoslaydi)
   useEffect(() => {
     if (!gameOver) return;
     if (savedRef.current) return;
@@ -137,7 +143,6 @@ export default function Game() {
             score: scoreRef.current,
           }),
         });
-        // natija backend tarafida faqat yuqori bo'lsa yangilanadi (server-side logic)
       } catch (e) {
         console.error("Save failed:", e);
       }
@@ -151,6 +156,8 @@ export default function Game() {
     setTargets([]);
     setScore(0);
     setGameOver(null);
+    setCurrentSpeed(1);
+    setScorePopups([]);
     savedRef.current = false;
     setRunning(true);
   };
@@ -159,71 +166,105 @@ export default function Game() {
     if (!running) return;
 
     if (t.color === "green") {
-      const now = Date.now();
-      const reaction = now - t.spawnAt;
-      const maxReaction = Math.max(200, lifespanRef.current);
-      const raw = Math.max(0, (maxReaction - reaction) / maxReaction);
-      const gained = Math.ceil(raw * 15) + 1;
+      const reaction = Date.now() - t.spawnAt;
+      const max = Math.max(200, lifespanRef.current);
+      const gained = Math.ceil(((max - reaction) / max) * 15) + 1;
+
       setScore((s) => s + gained);
       setTargets((list) => list.filter((x) => x.id !== t.id));
+
+      const popupId = Date.now();
+      setScorePopups((prev) => [
+        ...prev,
+        { id: popupId, x: t.x, y: t.y, value: gained },
+      ]);
+
+      setTimeout(() => {
+        setScorePopups((prev) => prev.filter((p) => p.id !== popupId));
+      }, 1200);
+
       return;
     }
 
     if (t.color === "red") {
-      // qizilni bosish -> o'yin tugaydi
-      setGameOver("Qizilga tegdingiz — o'yin tugadi");
+      setGameOver("Нажали красный — игра окончена!");
       setRunning(false);
       return;
     }
 
-    // sariq: neytral — bosilsa yoki vaqt tugasa o'chadi, lekin o'yin tugamaydi
+    // Sariq: neytral
     setTargets((list) => list.filter((x) => x.id !== t.id));
   };
 
   return (
-    <div className="page">
-      <h2>🎯 Click Rush</h2>
-
-      <div className="hud">
-        <div>Ball: <strong>{score}</strong></div>
-        <div>Best: <strong>{best}</strong></div>
-        <div>Status: {running ? "Ishlayapti" : gameOver ? "Tugatildi" : "Tayyor"}</div>
+    <div className="game-wrapper">
+      {/* HUD – endi tezlik ham bor */}
+      <div className="hud-bar">
+        <div className="hud-item">
+          <span className="label">Очки</span>
+          <span className="value score">{score.toLocaleString()}</span>
+        </div>
+        <div className="hud-item">
+          <span className="label">Рекорд</span>
+          <span className="value best">{best.toLocaleString()}</span>
+        </div>
+        <div className="hud-item">
+          <span className="label">Скорость</span>
+          <span className="value speed">{currentSpeed.toFixed(1)}x</span>
+        </div>
       </div>
 
-      <div className="game-area">
+      <div className="playfield">
+        {/* Targetlar */}
         {targets.map((t) => (
           <button
             key={t.id}
             className={`target ${t.color}`}
             style={{ left: `${t.x}%`, top: `${t.y}%` }}
             onClick={() => handleTargetClick(t)}
-            aria-label={`target-${t.id}`}
+          />
+        ))}
+
+        {/* +Ball animatsiyalari */}
+        {scorePopups.map((p) => (
+          <div
+            key={p.id}
+            className="score-popup"
+            style={{ left: `${p.x}%`, top: `${p.y}%` }}
           >
-            {t.color === "green" ? "🟢" : t.color === "red" ? "🔴" : "🟡"}
-          </button>
+            +{p.value}
+          </div>
         ))}
 
         {!running && !gameOver && (
-          <div className="overlay center">
-            <button className="btn" onClick={startGame}>Boshlash</button>
+          <div className="screen start-screen">
+            <div className="start-content">
+              {" "}
+              <h1 className="game-title">Click Rush</h1>
+              <p className="tagline">
+                Нажимай только зелёные • Скорость растёт
+              </p>
+              <button className="action-btn" onClick={startGame}>
+                ИГРАТЬ
+              </button>
+            </div>
           </div>
         )}
 
         {gameOver && (
-          <div className="overlay center">
-            <p><strong>{gameOver}</strong></p>
-            <p>Sizning ball: {score}</p>
-            <div style={{ display: "flex", gap: 10 }}>
-              <button className="btn" onClick={startGame}>Yana o‘ynash</button>
+          <div className="screen gameover-screen">
+            <div className="gameover-content">
+              {" "}
+              {/* ← YANGI wrapper */}
+              <h2 className="over-title">Игра окончена</h2>
+              <p className="reason">{gameOver}</p>
+              <div className="final-score">{score}</div>
+              <button className="action-btn" onClick={startGame}>
+                ИГРАТЬ СНОВА
+              </button>
             </div>
           </div>
         )}
-      </div>
-
-      <div style={{ marginTop: 12, fontSize: 13, color: "#aaa" }}>
-        Qoidalar: faqat <strong>yashil</strong>ni bosing. <strong>Qizil</strong>ni bossangiz o‘yin tugaydi.
-        <br />
-        <strong>Sariq</strong> neytral — uni bosish yoki bosmaslik o‘yinni tugatmaydi.
       </div>
     </div>
   );
