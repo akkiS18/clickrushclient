@@ -15,6 +15,13 @@ type ScorePopup = {
   value: number;
 };
 
+declare global {
+  interface Window {
+    YaGames: any;
+    ysdk: any;
+  }
+}
+
 const COLORS: Target["color"][] = ["green", "yellow", "red"];
 const BASE_SPAWN_INTERVAL = 1200;
 const BASE_LIFESPAN = 1200;
@@ -27,7 +34,7 @@ export default function Game() {
   const [running, setRunning] = useState(false);
   const [score, setScore] = useState(0);
   const [best, setBest] = useState(0);
-  const [user, setUser] = useState<any>(null);
+  const [_user, setUser] = useState<any>(null);
   const [gameOver, setGameOver] = useState<string | null>(null);
   const [currentSpeed, setCurrentSpeed] = useState(1);
   const [scorePopups, setScorePopups] = useState<ScorePopup[]>([]);
@@ -39,10 +46,34 @@ export default function Game() {
   const speedupTimerRef = useRef<number | null>(null);
   const savedRef = useRef(false);
   const scoreRef = useRef(score);
+  const [ysdk, setYsdk] = useState<any>(null);
 
   useEffect(() => {
     scoreRef.current = score;
   }, [score]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    const initYandex = async () => {
+      if (window.YaGames) {
+        const sdk = await window.YaGames.init();
+        setYsdk(sdk);
+
+        // Foydalanuvchi ma'lumotlari
+        const player = await sdk.getPlayer();
+        const profile = await player.getUniqueID();
+        const name = await player.getName();
+        setUser({ id: profile, username: name || "Player" });
+
+        // REKLAMA + LOADING TUGADI DEB AYTISH – OQ EKRANNI YO‘Q QILADI!
+        sdk.features.LoadingAPI?.ready();
+        console.log("Yandex SDK tayyor!");
+      }
+    };
+
+    initYandex();
+  }, []);
 
   useEffect(() => {
     const tg = (window as any).Telegram?.WebApp;
@@ -126,28 +157,17 @@ export default function Game() {
   }, [score]);
 
   useEffect(() => {
-    if (!gameOver) return;
+    if (!gameOver || !ysdk) return;
     if (savedRef.current) return;
     savedRef.current = true;
 
-    if (!user) return;
-
-    (async () => {
-      try {
-        await fetch("https://clickrush-bot.onrender.com/save-score", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            userId: String(user.id),
-            username: user.username || `${user.first_name || "Anon"}`,
-            score: scoreRef.current,
-          }),
-        });
-      } catch (e) {
-        console.error("Save failed:", e);
-      }
-    })();
-  }, [gameOver, user]);
+    ysdk
+      .getLeaderboards()
+      .then((lb: any) => {
+        lb.setLeaderboardScore("clickrush", score);
+      })
+      .catch(() => {});
+  }, [gameOver, ysdk, score]);
 
   const startGame = () => {
     nextId.current = 1;
@@ -195,6 +215,24 @@ export default function Game() {
     // Sariq: neytral
     setTargets((list) => list.filter((x) => x.id !== t.id));
   };
+
+  if (!ysdk && typeof window !== "undefined" && window.YaGames) {
+    return (
+      <div
+        style={{
+          background: "#000",
+          color: "#fff",
+          height: "100vh",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          fontSize: "24px",
+        }}
+      >
+        Загрузка...
+      </div>
+    );
+  }
 
   return (
     <div className="game-wrapper">
