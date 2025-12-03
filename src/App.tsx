@@ -47,6 +47,7 @@ export default function Game() {
   const savedRef = useRef(false);
   const scoreRef = useRef(score);
   const [ysdk, setYsdk] = useState<any>(null);
+  const [isReady, setIsReady] = useState(false);
 
   useEffect(() => {
     scoreRef.current = score;
@@ -56,24 +57,56 @@ export default function Game() {
     if (typeof window === "undefined") return;
 
     const initYandex = async () => {
-      if (window.YaGames) {
-        const sdk = await window.YaGames.init();
-        setYsdk(sdk);
+      try {
+        if (window.YaGames) {
+          console.log("Initializing Yandex SDK...");
+          const sdk = await window.YaGames.init();
+          setYsdk(sdk);
 
-        // Foydalanuvchi ma'lumotlari
-        const player = await sdk.getPlayer();
-        const profile = await player.getUniqueID();
-        const name = await player.getName();
-        setUser({ id: profile, username: name || "Player" });
+          // Get player info
+          try {
+            const player = await sdk.getPlayer();
+            const profile = await player.getUniqueID();
+            const name = await player.getName();
+            setUser({ id: profile, username: name || "Player" });
+          } catch (err) {
+            console.log("Player info not available:", err);
+            setUser({ id: "guest", username: "Guest" });
+          }
 
-        // REKLAMA + LOADING TUGADI DEB AYTISH – OQ EKRANNI YO‘Q QILADI!
-        sdk.features.LoadingAPI?.ready();
-        console.log("Yandex SDK tayyor!");
+          console.log("Yandex SDK ready!");
+        } else {
+          console.log("YaGames not available, running in standalone mode");
+          setUser({ id: "local", username: "Local Player" });
+        }
+      } catch (err) {
+        console.error("Error initializing Yandex SDK:", err);
+        setUser({ id: "error", username: "Player" });
+      } finally {
+        setIsReady(true);
       }
     };
 
     initYandex();
   }, []);
+
+  useEffect(() => {
+    if (!isReady || !ysdk) return;
+
+    // Delay to ensure everything is rendered
+    const timer = setTimeout(() => {
+      try {
+        if (ysdk.features?.LoadingAPI) {
+          ysdk.features.LoadingAPI.ready();
+          console.log("Loading API ready called");
+        }
+      } catch (err) {
+        console.error("Error calling LoadingAPI.ready:", err);
+      }
+    }, 100);
+
+    return () => clearTimeout(timer);
+  }, [isReady, ysdk]);
 
   useEffect(() => {
     const tg = (window as any).Telegram?.WebApp;
@@ -216,17 +249,18 @@ export default function Game() {
     setTargets((list) => list.filter((x) => x.id !== t.id));
   };
 
-  if (!ysdk && typeof window !== "undefined" && window.YaGames) {
+  if (!isReady) {
     return (
       <div
         style={{
-          background: "#000",
+          background: "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
           color: "#fff",
           height: "100vh",
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
           fontSize: "24px",
+          fontFamily: "sans-serif",
         }}
       >
         Загрузка...
